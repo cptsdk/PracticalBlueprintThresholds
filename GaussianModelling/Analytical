@@ -1,0 +1,26 @@
+import numpy as np
+from scipy.special import binom
+
+
+
+#################### Functions to plot the Gaussian model data ####################
+
+# Convert p_Z to Delta
+def p_to_Delta_br(p, N, M, Delta_t):
+    arg = 1 - 2*p*M
+    if arg <= 0:
+        return np.nan
+    return np.sqrt(-2 * np.log(arg) / ((Delta_t**2) * (M**2)))
+
+# Calculate the analytical fidelity for an encoded linear state, summing binomial coefficients binom(N/M, k) up to K terms
+def expression_br_cont(N, M, Delta, Delta_t, K=100):
+    L = N / M
+    expo = (0.5) * (Delta**2) * (Delta_t**2) * (M**2)
+    coeffs = [binom(L, k) for k in range(K)]
+    total = 0.0
+    for i, ci in enumerate(coeffs):
+        for j, cj in enumerate(coeffs):
+            total += ci * cj * np.exp(-expo * (i - j)**2)
+    fidelity = total / (2**(2 * L))
+
+    return (1 - fidelity)
