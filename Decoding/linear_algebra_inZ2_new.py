@@ -30,8 +30,6 @@ LTcpp_header.LossDecoder_GaussElimin_print.argtypes = [ctypes.POINTER(ctypes.c_b
 LTcpp_header.LossDecoder_GaussElimin_trackqbts.argtypes = [ctypes.POINTER(ctypes.c_bool), ctypes.POINTER(ctypes.c_int), ctypes.c_int, ctypes.c_int, ctypes.c_int]
 LTcpp_header.LossDecoder_GaussElimin_trackqbts_noorderedlost.argtypes = [ctypes.POINTER(ctypes.c_bool), ctypes.POINTER(ctypes.c_int), ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_int), ctypes.c_int]
 
-
-
 def loss_decoding_gausselim_fast(m, num_lost_qbts, print = False):
     if m.dtype != np.uint8:
         raise ValueError("The c++ function works only for binary matrices with numpy.uint8 datatype entries.")
@@ -59,7 +57,6 @@ def loss_decoding_gausselim_fast_trackqbts(m, qbt_syndr_mat, num_lost_qbts):
                                                    nr, nc, num_lost_qbts)
     return REF_m, REF_qbt_syndr_mat
 
-
 def LossDecoder_GaussElimin_trackqbts_noorderedlost(m, qbt_syndr_mat, lost_qbts):
     if m.dtype != np.uint8:
         raise ValueError("The c++ function works only for binary matrices with numpy.uint8 datatype entries.")
@@ -75,4 +72,3 @@ def LossDecoder_GaussElimin_trackqbts_noorderedlost(m, qbt_syndr_mat, lost_qbts)
                                                    lost_qbts.ctypes.data_as(ctypes.POINTER(ctypes.c_int)),
                                                    num_lost_qbts)
     return REF_m, REF_qbt_syndr_mat
-
