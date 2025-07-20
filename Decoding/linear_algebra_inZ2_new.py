@@ -6,9 +6,8 @@ import os
 cwd = os.getcwd()
 
 
-#########################################################################################################
-###### Wrapper functions to make Gaussian elimination.
-###### Sped-up version targeting loss decoding, binary operations performed in Cpp
+
+#################### Wrapper functions for Gaussian elimination - sped-up version targeting loss decoding, binary operations performed in Cpp ####################
 
 os_system = platform.system()
 
@@ -16,13 +15,13 @@ if os_system == 'Windows':
     try:
         LTcpp_header = ctypes.cdll.LoadLibrary('./libLossDec_win_new.dll')
     except:
-        LTcpp_header = ctypes.cdll.LoadLibrary(os.path.join(cwd, 'FusionLatticesAnalysis', 'libLossDec_win_new.dll'))
+        LTcpp_header = ctypes.cdll.LoadLibrary(os.path.join(cwd, 'libLossDec_win_new.dll'))
     print('Loaded C++ linear algebra functions for Windows OS')
 elif os_system == 'Linux':
     try:
         LTcpp_header = ctypes.cdll.LoadLibrary('./libLossDec.so')
     except:
-        LTcpp_header = ctypes.cdll.LoadLibrary(os.path.join(cwd, 'FusionLatticesAnalysis', 'libLossDec.so'))
+        LTcpp_header = ctypes.cdll.LoadLibrary(os.path.join(cwd, 'libLossDec.so'))
     print('Loaded C++ linear algebra functions for Linux OS')
 else:
     raise ValueError('Os system not supported: only Windows or Linux')
