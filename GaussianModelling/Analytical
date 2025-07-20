@@ -3,7 +3,7 @@ from scipy.special import binom
 
 
 
-#################### Functions to plot the Gaussian model data ####################
+#################### Functions to generate the Gaussian model data ####################
 
 # Convert p_Z to Delta
 def p_to_Delta_br(p, N, M, Delta_t):
