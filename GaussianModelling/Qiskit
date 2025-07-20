@@ -4,7 +4,7 @@ from qiskit.providers.aer import Aer
 
 
 
-#################### Functions that generate the Qiskit data ####################
+#################### Functions for generating the Qiskit data ####################
 
 def calculate_branch_fidelity(n, m, num_runs, prob_error):    
     # Construct the ideal encoded (aka "branched") cluster state circuit
