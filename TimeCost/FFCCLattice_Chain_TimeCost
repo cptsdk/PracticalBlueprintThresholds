@@ -18,7 +18,7 @@ except:
 def prepare_time_pool(loss_list, m, L, num_trials=100):
     Lattice = FFCCLattice_chain(L, L, L)    
     num_fusions = Lattice.num_fusions
-    num_qubits_res_state = Lattice.num_qubits_res_state*Lattice.lattice_z_size # no. of qubit in res state grows with z! !!!!!!!!!!!
+    num_qubits_res_state = Lattice.num_qubits_res_state*Lattice.lattice_z_size # no. of qubit in res state grows with z
 
     Lattice.get_fusions_layer_order() # fusion indices layer by layer
     fusions_layer_order = Lattice.fusions_layer_order
