@@ -145,6 +145,9 @@ if __name__ == '__main__':
     L_list = np.array([4, 6, 8, 10, 12, 14, 16, 18, 20, 22])
     eras_ps = np.linspace(0.0002, 0.1, 25)
     m = 8 # max attempt
+
+    norm1 = Normalize(vmin=0, vmax=len(L_list)-1)
+    scalarMap = cm.ScalarMappable(norm=norm1, cmap='viridis')
     
     start_t = default_timer()
     time_data = []
@@ -172,7 +175,11 @@ if __name__ == '__main__':
 
     L_list = np.linspace(4, 30, 30)
     m_max_list = np.array([2, 4, 6, 8, 10, 12])
+
+    norm2 = Normalize(vmin=0, vmax=len(m_max_list)-1)
+    scalarMap2 = cm.ScalarMappable(norm=norm2, cmap='plasma')
     plots_colors = [scalarMap2.to_rgba(x/(len(m_max_list)-1)) for x in range(len(m_max_list))]
+
     fig = plt.figure(figsize=(3,4))
     for idx,m_max in enumerate(m_max_list):
         plt.plot(L_list, (2*m_max+1)*6*L_list, label=r"$N = {}$".format(m_max), color = plots_colors[idx])
