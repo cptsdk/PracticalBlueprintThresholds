@@ -2,7 +2,11 @@ import numpy as np
 import os
 import multiprocessing
 from itertools import repeat
-  
+import matplotlib.pyplot as plt
+from timeit import default_timer
+from matplotlib import cm
+from matplotlib.colors import Normalize
+
 cwd = os.getcwd()
 saving_folder = os.path.join(cwd, "SavingFolder")
 
@@ -54,7 +58,7 @@ def prepare_time_singleloss(p_loss, m_max, p_fusion_success, RUS_lost_outcomes_l
 
     RUS_outcomes_XXZZ_indice_ = np.random.choice(RUS_lost_outcomes_index, num_fusions, p=probs_RUS_lost_outcomes_list)#.astype(dtype=np.int8)
     
-        ####### Obtain list of m for each encoded fusion ###########
+    ## Obtain list of m for each encoded fusion 
     # Probabilities for getting logical XXZZ in different numbers of attempts
     probs_XXZZ_attempt_list = np.array([p_XXZZ_dist_func(1-p_loss, i+1, 0, p_fail=1-p_fusion_success)-p_XXZZ_dist_func(1-p_loss, i, 0, p_fail=1-p_fusion_success) for i in range(m_max)])
     attempt_index = [i+1 for i in range(m_max)]
@@ -133,3 +137,47 @@ def p_erase_dist_func(eta, N_rep, r, p_fail = 0.5):
         a = eta**2 * p_fail_but_XX / (1-eta**2)
         final = (1-eta**2)**(N_rep-1) * (1-a**(N_rep)) / (1-a)  * ( (1-eta**2) + eta**2 * p_fail_no_XX  )
     return final
+
+if __name__ == '__main__':
+
+    # Simulation for logical clock cycle time as a function of loss
+
+    L_list = np.array([4, 6, 8, 10, 12, 14, 16, 18, 20, 22])
+    eras_ps = np.linspace(0.0002, 0.1, 25)
+    m = 8 # max attempt
+    
+    start_t = default_timer()
+    time_data = []
+    for L_ix, L in enumerate(L_list):
+        print('   Doing L=', L)
+        this_data = prepare_time_pool(eras_ps, m, L, num_trials=400)
+        time_data.append(this_data)
+    end_t = default_timer()
+    print('Completed in ', end_t - start_t, ' s')
+    
+    figure_name = 'time_Chain_m8_data_new'
+    time_cost = time_data
+    data_to_save = {'L_list': L_list, 'eras_ps': eras_ps, 'time_cost': time_cost}
+
+    plots_colors = [scalarMap.to_rgba(x/(len(L_list)-1)) for x in range(len(L_list))]
+    fig = plt.figure(figsize=(3,4))
+    for L_ix, L in enumerate(L_list):
+        plt.plot(eras_ps*100, time_data[L_ix],label=r"$L = {}$".format(L), color = plots_colors[L_ix])
+    plt.yscale('linear');plt.xlabel("Photon loss (%) ");plt.ylabel(r"Logical clock cycle time (units of $\tau_{\text{echo}}$)")
+    plt.title(r'$N = {}$'.format(m));plt.minorticks_on();
+    plt.grid(True, which="both", color='0.9')
+    fig.tight_layout() 
+
+    # Simulation for maximum logical clock cycle time as a function of code distance
+
+    L_list = np.linspace(4, 30, 30)
+    m_max_list = np.array([2, 4, 6, 8, 10, 12])
+    plots_colors = [scalarMap2.to_rgba(x/(len(m_max_list)-1)) for x in range(len(m_max_list))]
+    fig = plt.figure(figsize=(3,4))
+    for idx,m_max in enumerate(m_max_list):
+        plt.plot(L_list, (2*m_max+1)*6*L_list, label=r"$N = {}$".format(m_max), color = plots_colors[idx])
+    plt.yscale('linear');plt.xlabel(r"Code distance $L$ ");plt.ylabel(r"Max logical clock cycle time (units of $\tau_{\text{echo}}$)")
+    plt.grid(True, which="both", color='0.9')
+    plt.minorticks_on();plt.legend(loc='best')
+    fig.tight_layout() 
+    figure_name = 'max_m_L'
