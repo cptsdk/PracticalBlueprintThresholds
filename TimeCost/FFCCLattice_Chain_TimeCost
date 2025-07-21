@@ -1,0 +1,135 @@
+import numpy as np
+import os
+import multiprocessing
+from itertools import repeat
+  
+cwd = os.getcwd()
+saving_folder = os.path.join(cwd, "SavingFolder")
+
+try:
+    from Lattice.FFCCLattice_Chain import FFCCLattice_chain
+except:
+    from .Lattice.FFCCLattice_Chain import FFCCLattice_chain
+
+
+
+#################### Functions to generate the time cost estimates for performing all fusion measurements within a single logical clock cycle ####################
+
+def prepare_time_pool(loss_list, m, L, num_trials=100):
+    Lattice = FFCCLattice_chain(L, L, L)    
+    num_fusions = Lattice.num_fusions
+    num_qubits_res_state = Lattice.num_qubits_res_state*Lattice.lattice_z_size # no. of qubit in res state grows with z! !!!!!!!!!!!
+
+    Lattice.get_fusions_layer_order() # fusion indices layer by layer
+    fusions_layer_order = Lattice.fusions_layer_order
+    
+    p_fusion_success = 0.5
+    RUS_lost_outcomes_list = np.array([[0, 1], [1, 0], [1, 1], [0, 0]])  # [XX, ZZ] for each case. 0 means no loss in logical XX
+    # All 4 cases are [XX (lost in ZZ), ZZ (lost in XX), erasure, XXZZ] for logical fusion
+    RUS_lost_outcomes_index = [0, 1, 2, 3]
+
+    print('Start pooling...')
+    pool = multiprocessing.Pool()
+
+    n_encodedfus_ = pool.starmap(prepare_time_trials,
+                                 zip(loss_list, repeat(m), repeat(p_fusion_success), repeat(RUS_lost_outcomes_list),
+                                     repeat(RUS_lost_outcomes_index), repeat(num_qubits_res_state),  
+                                     repeat(fusions_layer_order), repeat(num_fusions), repeat(num_trials)))
+    
+    return np.array(n_encodedfus_)
+
+def prepare_time_trials(p_loss, m_max, p_fusion_success, RUS_lost_outcomes_list, RUS_lost_outcomes_index, num_qubits_res_state, fusions_layer_order, num_fusions, num_trials):
+    time_resource_state_count = 0
+    for n_trial in range(num_trials):
+        time_resource_state = prepare_time_singleloss(p_loss, m_max, p_fusion_success, RUS_lost_outcomes_list, RUS_lost_outcomes_index, num_qubits_res_state, fusions_layer_order, num_fusions)
+        time_resource_state_count += time_resource_state # add up all the
+    return time_resource_state_count / num_trials
+
+def prepare_time_singleloss(p_loss, m_max, p_fusion_success, RUS_lost_outcomes_list, RUS_lost_outcomes_index, num_qubits_res_state, fusions_layer_order, num_fusions):
+    
+    probs_RUS_lost_outcomes_list = [p_XX_dist_func(1-p_loss, m_max, 0, p_fail=1-p_fusion_success),
+                                    p_ZZ_dist_func(1-p_loss, m_max, 0, p_fail=1-p_fusion_success),
+                                    p_erase_dist_func(1-p_loss, m_max, 0, p_fail=1-p_fusion_success),
+                                    p_XXZZ_dist_func(1-p_loss, m_max, 0, p_fail=1-p_fusion_success)]
+
+    RUS_outcomes_XXZZ_indice_ = np.random.choice(RUS_lost_outcomes_index, num_fusions, p=probs_RUS_lost_outcomes_list)#.astype(dtype=np.int8)
+    
+        ####### Obtain list of m for each encoded fusion ###########
+    # Probabilities for getting logical XXZZ in different numbers of attempts
+    probs_XXZZ_attempt_list = np.array([p_XXZZ_dist_func(1-p_loss, i+1, 0, p_fail=1-p_fusion_success)-p_XXZZ_dist_func(1-p_loss, i, 0, p_fail=1-p_fusion_success) for i in range(m_max)])
+    attempt_index = [i+1 for i in range(m_max)]
+    all_XXZZ_indices = np.random.choice(attempt_index, num_fusions, p=probs_XXZZ_attempt_list / np.sum(probs_XXZZ_attempt_list))
+
+    # Probabilities for getting logical ZZ in different numbers of attempts
+    probs_ZZ_attempt_list = np.array([p_ZZ_dist_func(1-p_loss, i+1, 0, p_fail=1-p_fusion_success)-p_ZZ_dist_func(1-p_loss, i, 0, p_fail=1-p_fusion_success) for i in range(m_max)])
+    if not np.any(probs_ZZ_attempt_list): # if probs_ZZ_attempt_list is not all zeros, meaning there is loss or distinguishability
+        all_ZZ_indices = None # then there should not be logical ZZ only, which means elif RUS_outcomes_XXZZ_indice[log_fus_ix] == 1: will not run
+    else:
+        ZZ_attempt_index = [i+1 for i in range(m_max)]
+        all_ZZ_indices = np.random.choice(ZZ_attempt_index, num_fusions, p=probs_ZZ_attempt_list / np.sum(probs_ZZ_attempt_list))
+
+    # Probabilities for getting logical erasure in different numbers of attempts
+    probs_erasure_attempt_list = np.array([p_erase_dist_func(1-p_loss, i+1, 0, p_fail=1-p_fusion_success) for i in range(m_max)])
+    all_erasure_indices = np.random.choice(attempt_index, num_fusions, p=probs_erasure_attempt_list / np.sum(probs_erasure_attempt_list))
+
+    # Probabilities for getting logical erasure in different numbers of attempts
+    probs_XX_attempt_list = np.array([p_XX_dist_func(1-p_loss, i+1, 0, p_fail=1-p_fusion_success) for i in range(m_max)])
+    attempt_XX_index = [m_max for i in range(m_max)]
+    all_XX_indices = np.random.choice(attempt_index, num_fusions, p=probs_XX_attempt_list / np.sum(probs_XX_attempt_list))
+
+    # list of number of physical fusion attempts for each encoded RUS fusion
+    m_list = np.empty(num_fusions, dtype=np.int8)
+
+    # Create masks by comparing array to each RUS_lost_outcomes_index
+    xxzz_mask = (RUS_outcomes_XXZZ_indice_ == 3)
+    zz_mask = (RUS_outcomes_XXZZ_indice_ == 1)
+    xx_mask = (RUS_outcomes_XXZZ_indice_ == 0)
+    erasure_mask = (RUS_outcomes_XXZZ_indice_ == 2)
+
+    m_list[xxzz_mask] = all_XXZZ_indices[xxzz_mask]
+    m_list[zz_mask] = all_ZZ_indices[zz_mask]
+    m_list[xx_mask] = all_XX_indices[xx_mask]
+    m_list[erasure_mask] = all_erasure_indices[erasure_mask]
+
+    # for space cost (average no. of photons per resource state)
+    time_resource_state = 0
+    for layer_ix in range(num_qubits_res_state):
+        fus_ix_layer = np.where(fusions_layer_order == layer_ix)[0]
+        time_resource_state += np.average(m_list[list(fus_ix_layer)])
+        
+    return time_resource_state
+
+# RUS functions for sampling logical fusion outcomes, set r=0 to get p_XXZZ_RUS_func
+def p_XXZZ_dist_func(eta, N_rep, r, p_fail = 0.5):
+    p_e_XX = r/2 - 0.25*r**2 # prob of not getting physical XX outcome, suppose that fusion has already failed
+    p_success = (1-p_fail)*( 1 - p_e_XX ) # prob of not getting both physical XX and ZZ fusion outcome 
+    p_fail_but_XX = p_fail * (1-p_e_XX)  # prob of failed physical fusion but retrieve XX fusion outcome 
+    if np.any(N_rep == 0):
+        result = 0.0
+    else:
+        result = eta**2 * p_success + eta**2 * p_success * ( (1- (eta**2*p_fail_but_XX)**N_rep) / (1-eta**2*p_fail_but_XX) - 1)
+    return result
+
+def p_ZZ_dist_func(eta, N_rep, r, p_fail = 0.5):
+    if np.any(N_rep == 0):
+        result = 0.0
+    else:
+        result = 1- (p_XXZZ_dist_func(eta, N_rep, r, p_fail = p_fail) + p_XX_dist_func(eta, N_rep, r, p_fail = p_fail) + p_erase_dist_func(eta, N_rep, r, p_fail = p_fail)) # if writing in 1-a-b-c this gives floating point error where N_rep=1 it is negative
+    return result
+
+def p_XX_dist_func(eta, N_rep, r, p_fail = 0.5):
+    p_e_XX = r/2 - 0.25*r**2 # prob of not getting physical XX outcome, suppose that fusion has already failed
+    p_fail_but_XX = p_fail * (1-p_e_XX)  # prob of failed physical fusion but retrieve XX fusion outcome 
+    return (p_fail_but_XX*eta**2)**N_rep
+
+def p_erase_dist_func(eta, N_rep, r, p_fail = 0.5):
+    p_e_XX = r/2 - 0.25*r**2 # prob of not getting physical XX outcome, suppose that fusion has already failed
+    p_fail_but_XX = p_fail * (1-p_e_XX)  # prob of failed physical fusion but retrieve XX fusion outcome 
+    p_fail_no_XX = p_fail * (p_e_XX)
+    p_success_no_XX = (1-p_fail) * (p_e_XX)
+    if eta == 1: # consider limiting case for no loss
+        final = p_fail_but_XX**(N_rep-1) * p_fail_no_XX
+    else:
+        a = eta**2 * p_fail_but_XX / (1-eta**2)
+        final = (1-eta**2)**(N_rep-1) * (1-a**(N_rep)) / (1-a)  * ( (1-eta**2) + eta**2 * p_fail_no_XX  )
+    return final
