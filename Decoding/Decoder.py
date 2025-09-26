@@ -9,25 +9,19 @@ from itertools import repeat
 from pymatching import Matching
 from math import comb
 from collections import Counter
+import sys
+sys.path.insert(0, '../')
 
 cwd = os.getcwd()
 saving_folder = os.path.join(cwd, "SavingFolder")
 
-try:
-    from Lattice.FFCCLattice_Chain import FFCCLattice_chain
-    from linear_algebra_inZ2_new import LossDecoder_GaussElimin_trackqbts_noorderedlost
-    from NoiseSampling_funcs import multiedge_errorprob_uncorrelated, propagate_errors_multiedge, multiedge_errorprob_uncorrelated_precharnoise
-    from misc_functions import merge_multiedges_in_Hmat_faster, get_multiedge_errorprob, get_Hmat_weights, \
-        get_paired_qbt_list, fusion_error_merged
-except:
-    from .Lattice.FFCCLattice_Chain import FFCCLattice_chain
-    from .linear_algebra_inZ2_new import LossDecoder_GaussElimin_trackqbts_noorderedlost
-    from .NoiseSampling_funcs import multiedge_errorprob_uncorrelated, propagate_errors_multiedge, multiedge_errorprob_uncorrelated_precharnoise
-    from .misc_functions import merge_multiedges_in_Hmat_faster, get_multiedge_errorprob, \
-        get_Hmat_weights, get_paired_qbt_list, fusion_error_merged
+from Lattice.FFCCLattice_Chain import FFCCLattice_chain
+from linear_algebra_inZ2_new import LossDecoder_GaussElimin_trackqbts_noorderedlost
+from NoiseSampling_funcs import multiedge_errorprob_uncorrelated, propagate_errors_multiedge, multiedge_errorprob_uncorrelated_precharnoise
+from misc_functions import merge_multiedges_in_Hmat_faster, get_multiedge_errorprob, get_Hmat_weights, \
+    get_paired_qbt_list, fusion_error_merged
 
 from rsg_error_sampling import resource_state_errors, encoded_chain_sampler, branched_chains_sampler
-
 
 
 #################### Functions for full parallelized decoder of errors & losses for FFCC lattice ####################
@@ -595,7 +589,7 @@ _pauli2delta = {
     0: (0, 0),  # I
     1: (1, 0),  # X
     2: (0, 1),  # Z
-    3: (1, 1),  # Y}
+    3: (1, 1)}  # Y
 
 pauli_dx = np.array([0, 1, 0, 1], dtype=np.int8)
 pauli_dz = np.array([0, 0, 1, 1], dtype=np.int8)
@@ -1317,7 +1311,7 @@ def fusion_ErasureError( num_fusions, qbts_in_fusions, num_qubits_res_state, fus
             elif RUS_outcomes_XXZZ_indice[log_fus_ix] == 0: # if log fusion ends up with logical XX only
             # consider spin error in logical XX
                 fus_error_list[fusions_primal_isZZ[log_fus_ix]][log_fus_ix] = np.remainder(
-                    np.sum(qubit_errors[logqbt1_ix]n+ qubit_errors[logqbt2_ix] % 2,axis=0), 2)[1] # odd number of Z leads to error in logical XX = XXXXXX. No XX physical fusion failure.
+                    np.sum(qubit_errors[logqbt1_ix]+ qubit_errors[logqbt2_ix] % 2,axis=0), 2)[1] # odd number of Z leads to error in logical XX = XXXXXX. No XX physical fusion failure.
                 
                 # we don't know at what values of N_rep exactly fusion is successful or biased to give ZZ outcome
                 # so we sample the error given that we received a logical ZZ outcome
@@ -1364,7 +1358,7 @@ if __name__ == '__main__':
         Chain_data = []
         for L_ix, L in enumerate(L_list):
             print('   Doing L =', L)
-            this_data = decoder(
+            this_data = decoder_successprob_error_vs_loss_list_parallelized_encoded(
                 err_vs_eras_vals, p_fusion_fail, L, m, A, D, num_loss_trials=num_trials, num_ec_runs_per_loss_trial=1,
                 noise_mechanism='dist_RUS_reinit', decoding_weights='None')
             Chain_data.append(this_data)
