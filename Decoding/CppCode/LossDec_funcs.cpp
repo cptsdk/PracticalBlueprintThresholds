@@ -1,4 +1,4 @@
-### Written by Stefano Paesani
+/* Written by Stefano Paesani */
 
 # include "LossDec_funcs.h"
 # include <iostream>
@@ -150,6 +150,71 @@ void SubtractRows(data_type* mat, int row0, int row_target, int n_rows, int n_co
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+void LossDecoder_GaussElimin_trackqbts_noorderedlost(data_type* mat, int* qbt_syndr_mat, int n_rows, int n_cols, int* lost_qbts, int num_lost_qbts) {
+	int ix_r, lost_ix, lead_col, i, * track_synds_mat;
+	data_type* m;
+
+	// std::cout << "\nStarting row LossDecoder_GaussElimin_trackqbts" << std::endl;
+
+
+	//////////////////////////////////
+	// PrintMatrix_int_toTerminal(qbt_syndr_mat, n_cols, 2);
+	//////////////////////////////////
+
+	lost_ix = 0;
+
+
+	for (ix_r = 0; ix_r < (n_rows - 1); ix_r++) {
+
+
+		lead_col = *(lost_qbts + lost_ix);
+
+		if (lost_ix >= num_lost_qbts) {
+			return;
+		}
+
+		m = mat + lead_col + n_cols * ix_r;
+
+		i = ix_r;
+		while (*m == 0)
+		{
+			++i;
+			if (i == (n_rows - 1)) {
+				i = ix_r;
+				++lost_ix;
+				if (lost_ix == num_lost_qbts) {
+					return;
+				}
+				lead_col = *(lost_qbts + lost_ix);
+				m = mat + lead_col + n_cols * ix_r;
+			}
+			else {
+				m += n_cols;
+			}
+
+		}
+
+
+		if (i != ix_r) {
+			// std::cout << "\nSwitching rows " << ix_r << " and "<< i << std::endl;
+			SwitchRows_trackqbts(mat, qbt_syndr_mat, i, ix_r, n_rows, n_cols);
+		}
+
+		m = mat + lead_col + (ix_r + 1) * n_cols;
+		for (i = ix_r + 1; i < n_rows; i++) {
+			if (*m != 0) {
+				SubtractRows_trackqbts(mat, qbt_syndr_mat, ix_r, i, n_rows, n_cols);
+			}
+			m += n_cols;
+		}
+
+		lost_ix++;
+
+	}
+	return;
+}
 
 
 void LossDecoder_GaussElimin_trackqbts(data_type* mat, int* qbt_syndr_mat, int n_rows, int n_cols, int num_lost_qbts) {

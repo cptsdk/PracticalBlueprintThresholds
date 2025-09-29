@@ -1,5 +1,3 @@
-### Written by Stefano Paesani
-
 # define data_type bool
 
 extern "C" {

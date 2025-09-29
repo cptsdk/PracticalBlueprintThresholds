@@ -120,29 +120,23 @@ def encoded_chain_sampler(chain_length, ex, ey, ez, n_samples, num_chains, code_
     rs_flips = resource_state_errors(rs_hadamards, num_rs=num_chains, ex=ex, ey=ey, ez=ez, n_samples=n_samples, hadamard_photons=False, q_to_keep=good_ixs)
     return rs_flips
 
+def branched_chains_sampler(chain_length, ex, ez, n_samples, num_chains):
+    rs_hadamards =  [0, 1] * (chain_length + 5) + [0]
+    rs_flips = resource_state_errors(rs_hadamards, num_rs=num_chains, ex=ex, ez=ez, n_samples=n_samples)
+    return np.array(rs_flips)[:,:,3: chain_length + 3,:] # added 5 Mar 2024, dimension: (2, num_res_states, num_qubits_res_state, n_samples)
+
 
 if __name__ == '__main__':
-    xx_eras = np.random.choice((0, 1), p=(0.9, 0.1), size=(400,))
-    zz_eras = np.random.choice((0, 1), p=(0.9, 0.1), size=(400,))
-
-
-    flips = encoded_chain_sampler(100, 0.1, 0.1, 2, 1, 4, 6, XXerasures=xx_eras, ZZerasures=zz_eras)
-    exit()
+    flips = encoded_chain_sampler(100, 0.1, 0.1, 0.1, 2, 1, 4, 6)
     print(f'{len(flips)=}')
     print(np.sum(flips[:400]))
     print(np.sum(flips[400:]))
-    # print(flips)
-    exit()
 
-
-    error_sampler = ErrorSampler([1] * 11, infinite_chains=True, inf_chain_type="linear", good_q_ixs=list(range(1, 11)))
+    error_sampler = ErrorSampler([1] * 11, good_q_ixs=list(range(1, 11)))
     mats = error_sampler.construct_ts_rs_map()
     print("\n")
     for m in mats:
         print(np.where(m))
-    exit()
-
-
 
     n_samples=100000
     chain_length = 30
@@ -152,10 +146,6 @@ if __name__ == '__main__':
     print(errors_branched_chains.shape)
     print(np.sum(errors_branched_chains, axis=1)[:2 * chain_length * num_chains]/n_samples)
     print(np.sum(errors_branched_chains, axis=1)[2 * chain_length * num_chains:]/n_samples)
-
-
-    exit()
-
 
     # define hadamard orders for some common emitter RSGs
     linear_6 = [1] * 5
