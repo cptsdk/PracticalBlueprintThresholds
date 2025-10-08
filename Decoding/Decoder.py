@@ -21,7 +21,7 @@ from NoiseSampling_funcs import multiedge_errorprob_uncorrelated, propagate_erro
 from misc_functions import merge_multiedges_in_Hmat_faster, get_multiedge_errorprob, get_Hmat_weights, \
     get_paired_qbt_list, fusion_error_merged
 
-from rsg_error_sampling import resource_state_errors, encoded_chain_sampler, branched_chains_sampler
+from rsg_error_sampling import encoded_chain_sampler  # original without time-bin
 
 
 #################### Functions for full parallelized decoder of errors & losses for FFCC lattice ####################
@@ -391,6 +391,15 @@ def Swap2Rows(array):
         
     return array 
 
+"""
+original smapling function from M.-L. Chan et al. without time-bin (where spin error in between pulses can happen and e.g. cause loss)
+error_px,error_py,error_pz: error rates on the spin
+num_res_states: number of resource states (i.e. spins in the lattice)
+m: number of qubits per logical qubit (number of branches +1 of branched chain)
+num_qubits_res_state: number of logical qubits per resource state (i.e. length of branched chain)
+qbts_in_resource_states: (num_res_states x num_qubits_res_state) array with indices of logical qubits
+num_loss_trials: number of repetitions for averaging
+"""
 def sampling_qubit_errors(error_px,error_py,error_pz,num_res_states,m,num_qubits_res_state,qbts_in_resource_states,num_loss_trials):
     n_samples = num_loss_trials
     num_logqts_res_state = num_qubits_res_state
@@ -418,6 +427,14 @@ def sampling_qubit_errors(error_px,error_py,error_pz,num_res_states,m,num_qubits
     
     return qubit_errors
 
+"""
+error_pz: dephasing error probability on the spin
+num_res_states: number of resource states (i.e. spins in the lattice)
+m: number of qubits per logical qubit (number of branches +1 of branched chain)
+num_qubits_res_state: number of logical qubits per resource state (i.e. length of branched chain)
+qbts_in_resource_states: (num_res_states x num_qubits_res_state) array with indices of logical qubits
+n_sample: number of repetitions for averaging
+"""
 def sampling_qubit_errors_single_emitter_dist(error_pz, num_res_states, m, num_qubits_res_state, qbts_in_resource_states, n_sample): 
     N = (num_qubits_res_state * m) + 1
     n_CNOT = N - 1
@@ -444,6 +461,15 @@ def sampling_qubit_errors_single_emitter_dist(error_pz, num_res_states, m, num_q
     
     return qubit_errors   
 
+
+"""
+dominant_branching_error: error rate for the case of branching where one ends up with X on spin and X on photon (see Fig. 8a in https://arxiv.org/pdf/2507.16152)
+num_res_states: number of resource states (i.e. spins in the lattice)
+m: number of qubits per logical qubit (number of branches +1 of branched chain)
+num_qubits_res_state: number of logical qubits per resource state (i.e. length of branched chain)
+qbts_in_resource_states: (num_res_states x num_qubits_res_state) array with indices of logical qubits
+n_sample: number of repetitions for averaging
+"""
 def sampling_qubit_errors_branching(dominant_branching_error, num_res_states, m, num_qubits_res_state, qbts_in_resource_states, n_sample): 
     N = (num_qubits_res_state * m) + 1
     n_CNOT = N - 1
@@ -470,6 +496,16 @@ def sampling_qubit_errors_branching(dominant_branching_error, num_res_states, m,
     
     return qubit_errors
 
+
+"""
+error_pz: Z error on photon due to distinguishability (single emitter)
+dominant_branching_error: error rate for the case of branching where one ends up with X on spin and X on photon (see Fig. 8a in https://arxiv.org/pdf/2507.16152)
+num_res_states: number of resource states (i.e. spins in the lattice)
+m: number of qubits per logical qubit (number of branches +1 of branched chain)
+num_qubits_res_state: number of logical qubits per resource state (i.e. length of branched chain)
+qbts_in_resource_states: (num_res_states x num_qubits_res_state) array with indices of logical qubits
+n_sample: number of repetitions for averaging
+"""
 def sampling_qubit_errors_branching_singledist(error_pz, dominant_branching_error, num_res_states, m, num_qubits_res_state, qbts_in_resource_states, 
                                                n_sample): 
 
@@ -499,7 +535,15 @@ def sampling_qubit_errors_branching_singledist(error_pz, dominant_branching_erro
     
     return qubit_errors
 
-# Applies blinking errors to each qubit in order throughout the lattice, then checks which fusions have been lost as a result
+"""
+Applies blinking errors to each qubit in order throughout the lattice, then checks which fusions have been lost as a result
+num_fusions: number of all fusions
+fusion_erasures: all fusions that have erasures
+num_physical_qbts: number of physical qubits in the lattice
+qbts_in_resource_states: number of qubits in the resource state
+qbts_in_fusions: mapping to get which fusion the qubit belongs to
+A, D: parameters for blinking. A: turn on rate, D: turn off rate
+"""
 def blinking(num_fusions, num_physical_qbts, qbts_in_resource_states, qbts_in_fusions, A, D):
     fusion_erasures = np.zeros((num_fusions, 2), dtype=np.uint8)
     
@@ -1338,10 +1382,11 @@ def fusion_ErasureError( num_fusions, qbts_in_fusions, num_qubits_res_state, fus
 
 if __name__ == '__main__':
     from timeit import default_timer
-    import pickle
+    import matplotlib.colors as colors
+    import matplotlib.cm as cmx
 
     # Example simulation for photon loss
-    
+
     p_fusion_fail = 0.5
     num_trials = 10000
     L_list = np.array([4, 6, 8])
@@ -1350,7 +1395,7 @@ if __name__ == '__main__':
     m_range = [4] # Number of photons encoding each qubit
     loss = np.linspace(0, 0.01, 15)
     err_vs_eras_vals = np.array([(0, l, 0, 0) for l in loss]) # [error, loss, distinguishability, branching]
-    
+
     for m in m_range:
         start_t = default_timer()
         print(f'Running for m={m}')
