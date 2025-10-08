@@ -1,12 +1,12 @@
 import numpy as np
 
 class ErrorSampler:
-    def __init__(self, hadamards, x_flip_rate=0.01, y_flip_rate=0.01, z_flip_rate=0.01, good_q_ixs=None, hadamard_photons=True):
+    def __init__(self, hadamards, x_flip_rate, y_flip_rate, z_flip_rate, good_q_ixs=None, hadamard_photons=True):
         """
-
         :param hadamards:
-        :param x_flip_rate:
-        :param z_flip_rate:
+        :param x_flip_rate: Probability of X error per time step
+        :param y_flip_rate: Probability of Y error per time step
+        :param z_flip_rate: Probability of Z error per time step
         """
         self.hadamards = hadamards
         self.nq = len(self.hadamards) + 1
@@ -21,17 +21,17 @@ class ErrorSampler:
         self.error_maps = dict(zip(['xx', 'xz', 'zx', 'zz'], self.construct_ts_rs_map(apply_photon_hadamards=hadamard_photons)))
 
 
-    def sample_ts_errors_xyz(self, px, py, pz, num_ts, num_samples):
+    def sample_ts_errors_xyz(self, num_ts, num_samples):
         """
         Sample errors in timesteps for an error model in which x,y,z errors occur on the spin with probabilities px, py, pz
-        :param px: Probability of X error per time step
-        :param py: Probability of Y error per time step
-        :param pz: Probability of Z error per time step
         :param num_ts: Number of time steps (equal to number of qubits + 1)
         :param num_samples: Number of shots to sample
         :return: x_flips, z_flips. Binary matrices indicating where X and Z stabilizers on the spin are flipped.
         Note that the returned quantity is the stabilizers that are flipped and NOT the errors
         """
+        px = self.ex
+        py = self.ey
+        pz = self.ez
         assert (px + py + pz <= 1)
         ts_errors_all = np.random.choice((0, 1, 2, 3), p=(1 - px - py - pz, px, py, pz),
                                          size=(num_ts, num_samples))
@@ -70,15 +70,19 @@ class ErrorSampler:
 
         return xx_map, xz_map, zx_map, zz_map
 
-    def sample_qubit_errors_xyz(self, px, py, pz, n_samples, ts_samples=None):
+    def sample_qubit_errors_xyz(self, n_samples, ts_samples=None):
+        """
+        :param n_samples: number of samples for averaging
+        :param ts_samples:
+        :return: x_errors (n_qubit x n_samples) array, z_errors (n_qubit x n_samples) array
+        """
         if ts_samples is None:
-            ts_samples = self.sample_ts_errors_xyz(px, py, pz, num_ts=self.nq + 1, num_samples=n_samples)
+            ts_samples = self.sample_ts_errors_xyz(num_ts=self.nq + 1, num_samples=n_samples)
 #         qubit_xerr = (self.error_maps['xx'] @ ts_samples[0] + self.error_maps['zx'] @ ts_samples[1]) % 2
 #         qubit_zerr = (self.error_maps['xz'] @ ts_samples[0] + self.error_maps['zz'] @ ts_samples[1]) % 2
         qubit_xerr = (np.dot(self.error_maps['xx'],ts_samples[0]) + np.dot(self.error_maps['zx'],ts_samples[1])) % 2
         qubit_zerr = (np.dot(self.error_maps['xz'],ts_samples[0]) + np.dot(self.error_maps['zz'],ts_samples[1])) % 2
         return qubit_xerr.astype(np.uint8), qubit_zerr.astype(np.uint8)
-
 
 
 def resource_state_errors(rs_hadamards, num_rs, ex, ey, ez, n_samples, error_type='spin dephasing',
@@ -95,11 +99,11 @@ def resource_state_errors(rs_hadamards, num_rs, ex, ey, ez, n_samples, error_typ
     :param ez:
     :param n_samples:
     :param error_type: is defaulted to spin dephasing, no iid
-    :return:
+    :return: list with X- and Z-errors (each are arrays or shape num_rs x (len(rs_hadamards)+1) x n_samples)
     """
     if error_type == 'spin dephasing':
         es = ErrorSampler(rs_hadamards, ex, ey, ez, good_q_ixs=q_to_keep, hadamard_photons=hadamard_photons)
-        error_samples2d = es.sample_qubit_errors_xyz(ex, ey, ez, n_samples * num_rs)
+        error_samples2d = es.sample_qubit_errors_xyz(n_samples * num_rs)
     elif error_type == 'iid': # unused atm because there is no input for error_type
         num_qbts = len(rs_hadamards) + 1
         error_samples2d = np.random.choice((0, 1), p=(1-ex, ex), size=(num_qbts, n_samples * num_rs)), np.random.choice((0, 1), p=(1-ez, ez), size=(num_qbts, n_samples * num_rs))
@@ -122,17 +126,19 @@ def encoded_chain_sampler(chain_length, ex, ey, ez, n_samples, num_chains, code_
 
 def branched_chains_sampler(chain_length, ex, ez, n_samples, num_chains):
     rs_hadamards =  [0, 1] * (chain_length + 5) + [0]
-    rs_flips = resource_state_errors(rs_hadamards, num_rs=num_chains, ex=ex, ez=ez, n_samples=n_samples)
+    rs_flips = resource_state_errors(rs_hadamards, num_rs=num_chains, ex=ex, ey=0, ez=ez, n_samples=n_samples)
     return np.array(rs_flips)[:,:,3: chain_length + 3,:] # added 5 Mar 2024, dimension: (2, num_res_states, num_qubits_res_state, n_samples)
 
 
 if __name__ == '__main__':
+    from time import time
+
     flips = encoded_chain_sampler(100, 0.1, 0.1, 0.1, 2, 1, 4, 6)
     print(f'{len(flips)=}')
     print(np.sum(flips[:400]))
     print(np.sum(flips[400:]))
 
-    error_sampler = ErrorSampler([1] * 11, good_q_ixs=list(range(1, 11)))
+    error_sampler = ErrorSampler([1] * 11, 0.1, 0.1, 0.1, good_q_ixs=list(range(1, 11)))
     mats = error_sampler.construct_ts_rs_map()
     print("\n")
     for m in mats:
@@ -152,15 +158,15 @@ if __name__ == '__main__':
     star4 = [0, 0, 0]
     linear_8 = [1] * 7
     branched6 = [1, 0, 1, 0, 1, 1]
-    es = ErrorSampler(linear_8,  0.01, 0.01)
+    es = ErrorSampler(linear_8,  0.01, 0.01, 0.01)
 
     # Takes 100k samples for 8q linear cluster in 0.1s
     t0 = time()
-    q_samples = es.sample_qubit_errors(100000)
+    q_samples = es.sample_qubit_errors_xyz(100000)
     t1 = time()
     print(t1-t0)
 
     # To generate 1000 samples for 1000 4 qubit star graph states takes <1s
     t0 = time()
-    errors = resource_state_errors(star4, 1000, 0.01, 0.01, 1000)
+    errors = resource_state_errors(star4, 100, 0.01, 0.01, 0.01, 1000)
     print(time() - t0)
