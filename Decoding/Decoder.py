@@ -624,22 +624,12 @@ def blinking(num_fusions, num_physical_qbts, qbts_in_resource_states, qbts_in_fu
 
     return fusion_erasures
 
-
-
 #################### T2 time-bin simulation ####################
-
-# Pauli mapping
-_pauli2delta = {
-    0: (0, 0),  # I
-    1: (1, 0),  # X
-    2: (0, 1),  # Z
-    3: (1, 1)}  # Y
-
-pauli_dx = np.array([0, 1, 0, 1], dtype=np.int8)
-pauli_dz = np.array([0, 0, 1, 1], dtype=np.int8)
 
 @numba.njit
 def propagate_errors(pauli_labels, late):
+    pauli_dx = np.array([0, 1, 0, 1], dtype=np.int8)
+    pauli_dz = np.array([0, 0, 1, 1], dtype=np.int8)
     ep = np.zeros((2, 3), np.int8)
     x_between = False
 
@@ -670,6 +660,8 @@ def propagate_errors(pauli_labels, late):
 
 @numba.njit
 def simulate_one_resource_state_jit_spindepol(ep, loss_array, pauli_labels_all, late_all, hadamard_labels, n_CNOT, m):
+    pauli_dx = np.array([0, 1, 0, 1], dtype=np.int8)
+    pauli_dz = np.array([0, 0, 1, 1], dtype=np.int8)
     h_idx = 0
     hadamard(ep, 0)
     label = hadamard_labels[h_idx]
@@ -783,8 +775,6 @@ def sampling_qubit_errors_spindepol(p_error, num_res_states, m, num_qubits_res_s
     loss_array = loss_arr.reshape(n_sample, num_res_states*num_qubits_res_state, m)
 
     return qubit_errors, loss_array
-
-
 
 #################### Other simulations ####################
 
@@ -1002,8 +992,6 @@ def optimized_simulate_many_resources_branching_singledist(num_qubits_res_state,
     Z_error = Zbig[:, 1:, :]
     
     return [X_error, Z_error]
-
-
 
 #################### Convert physical errors/loss into fusion errors/loss ####################
 
