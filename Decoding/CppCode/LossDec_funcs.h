@@ -7,6 +7,7 @@ extern "C" {
     void SubtractRows(data_type*, int, int, int, int);
 
     void LossDecoder_GaussElimin_trackqbts(data_type*, int*, int, int, int);
+    void LossDecoder_GaussElimin_trackqbts_noorderedlost(data_type* mat, int* qbt_syndr_mat, int n_rows, int n_cols, int* lost_qbts, int num_lost_qbts);
     void SwitchRows_trackqbts(data_type*, int*, int, int, int, int);
     void SubtractRows_trackqbts(data_type*, int*, int, int, int, int);
 
