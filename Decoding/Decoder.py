@@ -33,7 +33,7 @@ def decoder_single_run_lossandEC_encoded( qubit_errors, loss_mask, m, num_fusion
                                          noise_mechanism='RUS', decoding_weights='None', fusion_is_physical=True):
 
     if noise_mechanism in ('dist_REP','dist_RUS','dist_RUS_reinit', 'Spin_X_RUS','Spin_Z_RUS','Spin_X_REP','Spin_Z_REP', 'Spin_depol_RUS','Spin_depol_REP', 
-                           'single_emitter_dist_RUS', 'RUS_branching','RUS_blinking','RUS_blinking_reinit','RUS_branching_singledist'):
+                           'single_emitter_dist_RUS', 'RUS_branching','RUS_blinking','RUS_blinking_reinit','RUS_branching_singledist','RUS_all_errors'):
         
         blinked = blinking(num_fusions, num_physical_qbts, qbts_in_resource_states, qbts_in_fusions, A, D)
         
@@ -142,7 +142,12 @@ def decoder_successprob_error_vs_loss_single_vals_encoded( noise_vals, qubit_err
                                                           num_fusions, H_withlogop_primal, fus_syndr_mat_primal, H_withlogop_dual, fus_syndr_mat_dual,
                                                           num_loss_trials, num_ec_runs_per_loss_trial, noise_mechanism, decoding_weights, 
                                                           num_physical_qbts, qbts_in_resource_states, A, D):
-    p_err, p_loss0, dist_err, br_err = noise_vals
+    
+    if len(noise_vals) == 5:
+        p_err, p_loss0, dist_err, br_err, se_dist_err = noise_vals
+    else:
+        p_err, p_loss0, dist_err, br_err = noise_vals
+        se_dist_err = 0
 
     if noise_mechanism in ('RUS','RUS_reinit', 'Spin_X_RUS', 'Spin_Z_RUS', 'Spin_depol_RUS', 'Spin_depol_REP', 'single_emitter_dist_RUS', 
                            'RUS_blinking', 'RUS_blinking_reinit'):
@@ -182,6 +187,18 @@ def decoder_successprob_error_vs_loss_single_vals_encoded( noise_vals, qubit_err
         p_fusion_success_unbiased = 1 - p_fusion_fail_unbiased
         p_fusion_success_biased   = 1 - p_fusion_fail_biased
 
+    elif noise_mechanism in ('RUS_all_errors'):
+        # noise_vals = (p_depol, p_loss, r_ee, p_br, p_z_se)
+        # p_err=p_depol, p_loss0=p_loss, dist_err=r_ee, br_err=p_br
+        # Emitter-emitter dist enters fusion through r_ee:
+        p_loss = p_loss0
+        p_fusion_success_unbiased = 0.5
+        p_fusion_success_biased   = 1 - 0.5*dist_err + 0.25*dist_err**2
+        p_err_unbiased            = dist_err - 0.5*dist_err**2
+        # p_err_biased is only used for the early-return check (line 72)
+        p_err_biased              = p_err + br_err + se_dist_err + (dist_err - 0.5*dist_err**2)
+        fusion_is_physical        = True
+
     else:
         raise ValueError(f"Unsupported noise_mechanism: {noise_mechanism}")
 
@@ -189,7 +206,27 @@ def decoder_successprob_error_vs_loss_single_vals_encoded( noise_vals, qubit_err
 
     num_errors = 0
     for trial in range(num_loss_trials):
-        combined_loss = loss_array[trial] | orig_loss[trial]        
+        # For RUS_all_errors:
+        #   - Independent photon loss (p_loss) is already modeled inside
+        #     the RUS probability functions via eta = 1 - p_loss. These
+        #     functions correctly compute the multi-attempt outcome
+        #     distribution accounting for per-attempt loss
+        #   - Depol-induced loss (loss_array) is not known to the RUS
+        #     functions — it comes from the circuit-level simulation and
+        #     must enter through loss_mask -> fusion_loss
+        #   - Blinking enters separately through blinking() -> blinked_fusions
+        #   Therefore loss_mask should carry only depol-induced loss
+        #
+        # For all other mechanisms:
+        #   - The RUS functions are called with eta=1 (no independent loss),
+        #     or the mechanism doesn't use RUS at all
+        #   - Independent photon loss enters as a specific realization
+        #     through orig_loss, OR'd with any depol-induced loss
+        if noise_mechanism == 'RUS_all_errors':
+            combined_loss = loss_array[trial]
+        else:
+            combined_loss = loss_array[trial] | orig_loss[trial]
+
         num_errors += decoder_single_run_lossandEC_encoded(qubit_errors[trial], combined_loss, m, num_fusions, qbts_in_fusions, num_qubits_res_state,
                                                            fusions_primal_isZZ, fusions_layer_order, fusion_for_qubits, H_withlogop_primal, 
                                                            fus_syndr_mat_primal, H_withlogop_dual, fus_syndr_mat_dual, p_loss, p_fusion_success_biased, 
@@ -222,7 +259,7 @@ def decoder_successprob_error_vs_loss_list_parallelized_encoded(error_vs_loss_li
     fusions_primal_isZZ = Lattice.fusions_primal_isZZ
     num_qubits_res_state = Lattice.num_qubits_res_state*Lattice.lattice_z_size 
     
-    if noise_mechanism == 'RUS' or noise_mechanism == 'dist_RUS_reinit' or noise_mechanism == 'RUS_blinking_reinit' or noise_mechanism == 'RUS_dist_SpinDepol': 
+    if noise_mechanism in ('RUS', 'dist_RUS_reinit', 'RUS_blinking_reinit', 'RUS_dist_SpinDepol', 'RUS_all_errors'): 
         Lattice.get_fusions_layer_order() # fusion indices layer by layer
         fusions_layer_order = Lattice.fusions_layer_order
         fusion_for_qubits = Lattice.fusion_for_qubits
@@ -289,6 +326,21 @@ def decoder_successprob_error_vs_loss_list_parallelized_encoded(error_vs_loss_li
             qubit_errors_list[i,:,:,:,:] = sampling_qubit_errors_branching_singledist(error_vs_loss_list[i][0], error_vs_loss_list[i][3], num_res_states, m,
                                                                                       num_qubits_res_state, qbts_in_resource_states, num_loss_trials)
     
+    elif noise_mechanism in ('RUS_all_errors'):
+        # Combined sampling: time-bin depol + branching + SE-dist → qubit errors + loss
+        # error_vs_loss_list columns: [p_depol, p_loss, r_ee, p_br, p_z_se]
+        qubit_errors_list = np.zeros(shape=(np.shape(error_vs_loss_list)[0], n_samples, num_qubits_res_state*num_res_states, m, 2), dtype=np.int8)
+        loss_array_list = np.zeros((np.shape(error_vs_loss_list)[0], n_samples, num_qubits_res_state*num_res_states, m), dtype=np.int8)
+        for i in range(np.shape(error_vs_loss_list)[0]):
+            p_depol_i = error_vs_loss_list[i][0]
+            p_br_i    = error_vs_loss_list[i][3]
+            p_z_se_i  = error_vs_loss_list[i][4]
+            qe, la = sampling_qubit_errors_all(p_depol_i, p_br_i, p_z_se_i,
+                                               num_res_states, m, num_qubits_res_state,
+                                               qbts_in_resource_states, n_samples)
+            qubit_errors_list[i] = qe
+            loss_array_list[i]   = la
+
     else:
         qubit_errors_list = np.empty(shape=(np.shape(error_vs_loss_list)[0],n_samples,2), dtype=np.int8)
 
@@ -461,7 +513,6 @@ def sampling_qubit_errors_single_emitter_dist(error_pz, num_res_states, m, num_q
     
     return qubit_errors   
 
-
 """
 dominant_branching_error: error rate for the case of branching where one ends up with X on spin and X on photon (see Fig. 8a in https://arxiv.org/pdf/2507.16152)
 num_res_states: number of resource states (i.e. spins in the lattice)
@@ -495,7 +546,6 @@ def sampling_qubit_errors_branching(dominant_branching_error, num_res_states, m,
     qubit_errors = qubit_errors_[:, swap_indices]
     
     return qubit_errors
-
 
 """
 error_pz: Z error on photon due to distinguishability (single emitter)
@@ -775,6 +825,201 @@ def sampling_qubit_errors_spindepol(p_error, num_res_states, m, num_qubits_res_s
     loss_array = loss_arr.reshape(n_sample, num_res_states*num_qubits_res_state, m)
 
     return qubit_errors, loss_array
+
+#################### Combined all-errors simulation (time-bin depol + branching + SE-dist) ####################
+# These functions simulate all circuit-level error sources together on a single
+# resource state.  The physical model:
+#   - Spin depol is sampled first via the time-bin propagate_errors model
+#   - Photon errors from depol are SET (not XOR) — same as Spin_depol_RUS
+#   - Branching is applied on top (via XOR), but ONLY when no X-type depol
+#     error occurred between the time bins (gates 2,3), because such errors
+#     prevent late-bin emission and branching converts early→late
+#   - Single-emitter distinguishability (Z on photon) is independent
+#   - Depol-induced loss is recorded; independent photon loss is OR'd in later
+
+@numba.njit
+def simulate_one_resource_state_jit_all(ep, loss_array,
+                                         pauli_labels_all, late_all,
+                                         hadamard_labels,
+                                         branching, error_pz,
+                                         n_CNOT, m):
+    """
+    One resource state with time-bin depol + branching + SE-dist.
+
+    Depol uses SET for photon errors (matches validated Spin_depol_RUS).
+    Branching is applied conditionally after depol:
+      - Only if no X-type depol error occurred between time bins
+    SE-dist (Z on photon) is independent, applied last.
+    """
+    pauli_dx = np.array([0, 1, 0, 1], dtype=np.int8)
+    pauli_dz = np.array([0, 0, 1, 1], dtype=np.int8)
+    h_idx = 0
+
+    # Initial Hadamard + depol at Hadamard
+    hadamard(ep, 0)
+    label = hadamard_labels[h_idx]
+    ep[0, 0] ^= pauli_dx[label]
+    ep[0, 1] ^= pauli_dz[label]
+    h_idx += 1
+
+    for i in range(n_CNOT):
+        # ── CNOT: entangle spin with photon i+1 ──
+        controlledNOT(ep, 0, i + 1)
+
+        # ── Time-bin spin depol ──
+        block_ep = propagate_errors(pauli_labels_all[i], late_all[i])
+
+        # Record loss from depol
+        loss_array[i] = block_ep[1, 2]
+
+        # Accumulate depol spin errors
+        ep[0, 0] ^= block_ep[0, 0]
+        ep[0, 1] ^= block_ep[0, 1]
+
+        # SET photon errors from depol (matches Spin_depol_RUS)
+        ep[i + 1, 0] = block_ep[1, 0]
+        ep[i + 1, 1] = block_ep[1, 1]
+
+        # ── Branching ──
+        # Branching can only occur when no X-type depol error occurred
+        # between time bins (gates 2,3), because such errors prevent
+        # late-bin emission and branching converts early→late
+        if branching[i] == 1:
+            # Check for X errors between time bins: gates 2 and 3
+            # (indices 1 and 2 in pauli_labels_all[i])
+            gate2_has_x = pauli_dx[pauli_labels_all[i][1]] == 1
+            gate3_has_x = pauli_dx[pauli_labels_all[i][2]] == 1
+            x_between = gate2_has_x or gate3_has_x
+
+            if not x_between:
+                # Branching: X on photon, and X on spin (except first photon)
+                ep[i + 1, 0] ^= 1
+                if i > 0:
+                    ep[0, 0] ^= 1
+
+        # ── Single-emitter distinguishability: Z on photon ──
+        if error_pz[i] == 1:
+            ep[i + 1, 1] ^= 1
+
+        # ── Periodic Hadamard + depol at Hadamard ──
+        if (i + 1) % m == 0 and i < n_CNOT - 1:
+            hadamard(ep, 0)
+            label = hadamard_labels[h_idx]
+            ep[0, 0] ^= pauli_dx[label]
+            ep[0, 1] ^= pauli_dz[label]
+            h_idx += 1
+
+    return ep
+
+@numba.njit(parallel=True)
+def run_many_resource_states_jit_all(Xbig, Zbig, loss_big,
+                                      pauli_labels_big, late_big,
+                                      hadamard_labels_big,
+                                      branching_big, error_pz_big,
+                                      n_CNOT, m):
+    n_rs, N, n_sample = Xbig.shape
+
+    for i in numba.prange(n_rs):
+        for s in range(n_sample):
+            ep = np.zeros((N, 2), dtype=np.uint8)
+            loss_array = loss_big[i, s]
+            simulate_one_resource_state_jit_all(
+                ep, loss_array,
+                pauli_labels_big[i, s], late_big[i, s],
+                hadamard_labels_big[i, s],
+                branching_big[i, s], error_pz_big[i, s],
+                n_CNOT, m
+            )
+            for q in range(N):
+                Xbig[i, q, s] = ep[q, 0]
+                Zbig[i, q, s] = ep[q, 1]
+
+    return Xbig, Zbig, loss_big
+
+def optimized_simulate_many_resources_all(num_qubits_res_state,
+                                           pauli_labels_big, late_big,
+                                           hadamard_labels_big,
+                                           branching_big, error_pz_big, m):
+    n_rs, n_sample, n_CNOT, _ = pauli_labels_big.shape
+    N = num_qubits_res_state * m + 1
+
+    Xbig = np.zeros((n_rs, N, n_sample), dtype=np.uint8)
+    Zbig = np.zeros_like(Xbig)
+    loss_big = np.zeros((n_rs, n_sample, n_CNOT), dtype=np.uint8)
+
+    Xbig, Zbig, loss_big = run_many_resource_states_jit_all(
+        Xbig, Zbig, loss_big,
+        pauli_labels_big, late_big, hadamard_labels_big,
+        branching_big, error_pz_big,
+        n_CNOT, m)
+
+    X_error = Xbig[:, 1:, :]
+    Z_error = Zbig[:, 1:, :]
+    return X_error, Z_error, loss_big
+
+def sampling_qubit_errors_all(p_depol, p_br, p_z_se,
+                               num_res_states, m, num_qubits_res_state,
+                               qbts_in_resource_states, n_sample):
+    """
+    Sample circuit-level errors: time-bin depol + branching + SE-dist.
+
+    Returns (qubit_errors, loss_array) in same format as spindepol.
+    """
+    N = num_qubits_res_state * m + 1
+    n_CNOT = N - 1
+    n_rs = num_res_states
+    n_H = 1 + (n_CNOT - 1) // m
+
+    # Pre-sample: depol
+    probs = [1 - p_depol, p_depol / 3, p_depol / 3, p_depol / 3]
+    pauli_labels_big = np.random.choice(
+        [0, 1, 2, 3], size=(n_rs, n_sample, n_CNOT, 4), p=probs
+    ).astype(np.uint8)
+    hadamard_labels_big = np.random.choice(
+        [0, 1, 2, 3], size=(n_rs, n_sample, n_H), p=probs
+    ).astype(np.uint8)
+    late_big = (np.random.rand(n_rs, n_sample, n_CNOT) < 0.5)
+
+    # Pre-sample: branching
+    if p_br > 0:
+        branching_big = np.random.binomial(
+            1, p_br, size=(n_rs, n_sample, n_CNOT)
+        ).astype(np.uint8)
+    else:
+        branching_big = np.zeros((n_rs, n_sample, n_CNOT), dtype=np.uint8)
+
+    # Pre-sample: SE distinguishability
+    if p_z_se > 0:
+        error_pz_big = np.random.binomial(1, p_z_se, size=(n_rs, n_sample, n_CNOT)).astype(np.uint8)
+    else:
+        error_pz_big = np.zeros((n_rs, n_sample, n_CNOT), dtype=np.uint8)
+
+    # Run simulation
+    X_error_big, Z_error_big, loss_big = optimized_simulate_many_resources_all(
+        num_qubits_res_state,
+        pauli_labels_big, late_big, hadamard_labels_big,
+        branching_big, error_pz_big, m)
+
+    # Reshape (same as spindepol)
+    X_err = np.transpose(X_error_big, (2, 0, 1))
+    Z_err = np.transpose(Z_error_big, (2, 0, 1))
+    X_err = X_err.reshape(n_sample, n_rs, num_qubits_res_state, m, 1)
+    Z_err = Z_err.reshape(n_sample, n_rs, num_qubits_res_state, m, 1)
+    sampled_photons_error_list = np.concatenate((X_err, Z_err), axis=4)
+
+    qubit_errors_ = np.zeros((n_sample, n_rs*num_qubits_res_state, m, 2), dtype=np.uint8)
+    for rs in range(num_res_states):
+        locs = qbts_in_resource_states[rs]
+        qubit_errors_[:, locs] = sampled_photons_error_list[:, rs]
+
+    swap_indices = Swap2Rows(np.arange(num_res_states*num_qubits_res_state))
+    qubit_errors = qubit_errors_[:, swap_indices]
+
+    loss_arr = loss_big.transpose(1, 0, 2)
+    loss_array = loss_arr.reshape(n_sample, num_res_states*num_qubits_res_state, m)
+
+    return qubit_errors, loss_array
+
 
 #################### Other simulations ####################
 
@@ -1089,34 +1334,57 @@ def RUS_fusion_erasures(num_fusions, qbts_in_fusions, num_qubits_res_state, fusi
     
     return primal_errors, dual_errors, lost_fusions_primal, lost_fusions_dual
 
-# For each logical fusion, compute the logical fusion error
+# For each logical fusion, compute the logical fusion error from qubit errors.
+#
+# Outcome map (RUS_lost_outcomes_list):
+#   0 = XX only  (ZZ side lost)  — XX error from accumulated Z qubit errors
+#   1 = ZZ only  (XX side lost)  — ZZ error from X qubit errors at ZZ attempt
+#   2 = erasure  (both lost)     — no error to compute
+#   3 = XXZZ     (full success)  — XX from accumulated Z; ZZ from X at XXZZ attempt
+#
+# all_ZZ_indices: which attempt produced the ZZ result (used for outcome 1).
+#   For noise mechanisms with dist_err=0, outcome 1 has zero probability and
+#   all_ZZ_indices is unused — callers may pass a dummy array.
 @numba.njit
-def compute_fus_errors_jit(num_fusions, m_max, qbts_in_fusions, RUS_outcomes, all_XXZZ_indices, fusions_primal_isZZ, qubit_errors, fus_error_list):
+def compute_fus_errors_jit(num_fusions, m_max, qbts_in_fusions, RUS_outcomes,
+                           all_XXZZ_indices, all_ZZ_indices,
+                           fusions_primal_isZZ, qubit_errors, fus_error_list):
     for log_fus_ix in range(num_fusions):
-        # Get indices for the two logical qubits involved in the fusion
         q1 = qbts_in_fusions[log_fus_ix, 0]
         q2 = qbts_in_fusions[log_fus_ix, 1]
         outcome = RUS_outcomes[log_fus_ix]
-        
+
         if outcome == 3:
+            # XXZZ: both XX and ZZ survived
+            # Logical XX error = parity of Z qubit errors accumulated over all
+            # attempts up to and including the successful one
             attempt = all_XXZZ_indices[log_fus_ix]
             sum1 = 0
             for k in range(attempt):
-                # Sum the errors on the second (logical Z) component modulo 2
-                sum1 += ( (qubit_errors[q1, k, 1] + qubit_errors[q2, k, 1]) & 1 )
-            error_val_XX = sum1 & 1
-            fus_error_list[fusions_primal_isZZ[log_fus_ix], log_fus_ix] = error_val_XX
-            # For the dual (logical ZZ) outcome, take the error from the first (logical X) component at the final attempt
+                sum1 += ((qubit_errors[q1, k, 1] + qubit_errors[q2, k, 1]) & 1)
+            fus_error_list[fusions_primal_isZZ[log_fus_ix], log_fus_ix] = sum1 & 1
+            # Logical ZZ error = parity of X qubit errors at the successful attempt
             e1 = (qubit_errors[q1, attempt-1, 0] + qubit_errors[q2, attempt-1, 0]) & 1
             fus_error_list[1 - fusions_primal_isZZ[log_fus_ix], log_fus_ix] = e1
-        
+
+        elif outcome == 1:
+            # ZZ only: got a ZZ measurement but never XX (possible when dist_err > 0)
+            # Logical ZZ error = parity of X qubit errors at the attempt that
+            # produced ZZ.  (EE-dist fusion error is added separately by caller.)
+            zz_attempt = all_ZZ_indices[log_fus_ix]
+            e1 = (qubit_errors[q1, zz_attempt-1, 0] + qubit_errors[q2, zz_attempt-1, 0]) & 1
+            fus_error_list[1 - fusions_primal_isZZ[log_fus_ix], log_fus_ix] = e1
+
         elif outcome == 0:
+            # XX only: ZZ side lost
+            # Logical XX error = parity of Z qubit errors across all m attempts
             sum1 = 0
             for k in range(m_max):
                 sum1 += ((qubit_errors[q1, k, 1] + qubit_errors[q2, k, 1]) & 1)
-            error_val_XX = sum1 & 1
-            fus_error_list[fusions_primal_isZZ[log_fus_ix], log_fus_ix] = error_val_XX
-    
+            fus_error_list[fusions_primal_isZZ[log_fus_ix], log_fus_ix] = sum1 & 1
+
+        # outcome == 2 (erasure): both sides lost, nothing to compute
+
     return fus_error_list
 
 def fusion_ErasureError( num_fusions, qbts_in_fusions, num_qubits_res_state, fusions_primal_isZZ, qubit_errors, fusions_layer_order, fusion_for_qubits, 
@@ -1226,8 +1494,11 @@ def fusion_ErasureError( num_fusions, qbts_in_fusions, num_qubits_res_state, fus
         qbts_in_fusions_arr      = np.array(qbts_in_fusions, dtype=np.int64)
         fusions_primal_isZZ_arr  = np.array(fusions_primal_isZZ, dtype=np.int64)
 
-        fus_error_list = compute_fus_errors_jit(num_fusions, m_max, qbts_in_fusions_arr, RUS_outcomes_array, all_XXZZ_indices, fusions_primal_isZZ_arr, 
-                                                qubit_errors, fus_error_list)
+        # all_ZZ_indices: dummy — outcome 1 (ZZ-only) has zero probability
+        # when dist_err=0, so this is never accessed
+        fus_error_list = compute_fus_errors_jit(num_fusions, m_max, qbts_in_fusions_arr,
+                                                RUS_outcomes_array, all_XXZZ_indices, all_XXZZ_indices,
+                                                fusions_primal_isZZ_arr, qubit_errors, fus_error_list)
 
         # Extract logical errors for fusions that were not lost
         primal_errors = fus_error_list[0][np.where(~np.array(primal_lost_fusions))[0]]
@@ -1262,10 +1533,106 @@ def fusion_ErasureError( num_fusions, qbts_in_fusions, num_qubits_res_state, fus
         qbts_in_fusions_arr  = np.array(qbts_in_fusions, dtype=np.int64)
         fusions_primal_isZZ_arr = np.array(fusions_primal_isZZ, dtype=np.int64)
         
-        fus_error_list = compute_fus_errors_jit(num_fusions, m_max, qbts_in_fusions_arr, RUS_outcomes_array, all_XXZZ_indices, fusions_primal_isZZ_arr, 
-                                                qubit_errors, fus_error_list)
+        # all_ZZ_indices: dummy — outcome 1 (ZZ-only) has zero probability
+        # when dist_err=0, so this is never accessed
+        fus_error_list = compute_fus_errors_jit(num_fusions, m_max, qbts_in_fusions_arr,
+                                                RUS_outcomes_array, all_XXZZ_indices, all_XXZZ_indices,
+                                                fusions_primal_isZZ_arr, qubit_errors, fus_error_list)
     
         # Extract logical errors for fusions that were not lost.
+        primal_errors = fus_error_list[0][np.where(np.logical_not(primal_lost_fusions))[0]]
+        dual_errors   = fus_error_list[1][np.where(np.logical_not(dual_lost_fusions))[0]]
+
+    elif noise_type in ('RUS_all_errors'):
+        # Combined fusion-level: RUS with r≠0 (ee-dist) + blinking + circuit-level qubit errors
+        # dist_err = r_ee enters through p_XXZZ_dist_func to model ee-distinguishability
+        # qubit_errors already contain spin depol + branching + se-dist from circuit sim
+
+        # RUS outcome probabilities with r_ee (may be 0)
+        probs_RUS_lost_outcomes_list = [
+            p_XX_dist_func(1 - p_loss, m_max, dist_err, p_fail=1 - p_fusion_success),
+            p_ZZ_dist_func(1 - p_loss, m_max, dist_err, p_fail=1 - p_fusion_success),
+            p_erase_dist_func(1 - p_loss, m_max, dist_err, p_fail=1 - p_fusion_success),
+            p_XXZZ_dist_func(1 - p_loss, m_max, dist_err, p_fail=1 - p_fusion_success)]
+
+        # Sample initial RUS outcomes
+        RUS_outcomes_XXZZ_indice_ = np.random.choice(RUS_lost_outcomes_index, num_fusions, p=probs_RUS_lost_outcomes_list)
+
+        # Fold in blinking + circuit-level loss
+        lost0 = RUS_lost_outcomes_list[RUS_outcomes_XXZZ_indice_]
+        lost0 |= blinked_fusions
+        lost0 |= fusion_loss
+        idx_map = {tuple(pair): idx for idx, pair in enumerate(RUS_lost_outcomes_list)}
+        RUS_outcomes_XXZZ_indice_ = np.array([idx_map[tuple(pair)] for pair in lost0])
+
+        # RUS reinitialisation
+        for layer_ix in range(num_qubits_res_state):
+            if layer_ix > 0:
+                for _ in range(m_max):
+                    RUS_outcomes_XXZZ_indice_ = RUS_ReAttempts(
+                        fusions_layer_order, layer_ix,
+                        RUS_outcomes_XXZZ_indice_,
+                        RUS_lost_outcomes_index,
+                        probs_RUS_lost_outcomes_list,
+                        qbts_in_fusions, fusion_for_qubits)
+
+        # Final lost-fusion mask
+        RUS_outcomes_XXZZ_indice = list(RUS_outcomes_XXZZ_indice_)
+        lost_fusion_XXZZ = RUS_lost_outcomes_list[RUS_outcomes_XXZZ_indice]
+        primal_lost_fusions = [lost_fusion_XXZZ[i][j] for i, j in enumerate(fusions_primal_isZZ)]
+        dual_lost_fusions = [lost_fusion_XXZZ[i][j] for i, j in enumerate(1 - fusions_primal_isZZ)]
+
+        # Compute fusion errors with proper attempt distributions
+        #
+        # Use the distinguishability-aware CDF from p_XXZZ_dist_func
+        # and p_ZZ_dist_func to sample which attempt produced the XXZZ / ZZ result,
+        # rather than assuming a simple geometric(0.5) distribution.  When dist_err>0
+        # the per-attempt success probability depends on r
+        #
+        # Sample all_ZZ_indices for outcome-1 (ZZ-only) fusions
+        # When dist_err>0, outcome 1 has nonzero probability, and the logical ZZ
+        # error depends on X qubit errors at the attempt that produced ZZ
+        # compute_fus_errors_jit now handles this via its outcome-1 branch
+        fus_error_list = np.zeros((2, num_fusions), dtype=np.int8)
+
+        # XXZZ attempt distribution (CDF increments) 
+        probs_XXZZ_attempt_list = np.array([
+            p_XXZZ_dist_func(1 - p_loss, i + 1, dist_err, p_fail=1 - p_fusion_success) -
+            p_XXZZ_dist_func(1 - p_loss, i,     dist_err, p_fail=1 - p_fusion_success)
+            for i in range(m_max)])
+        attempt_index = [i + 1 for i in range(m_max)]
+        all_XXZZ_indices = np.random.choice(
+            attempt_index, num_fusions,
+            p=probs_XXZZ_attempt_list / np.sum(probs_XXZZ_attempt_list))
+
+        # ZZ-only attempt distribution (CDF increments)
+        probs_ZZ_attempt_list = np.array([
+            p_ZZ_dist_func(1 - p_loss, i + 1, dist_err, p_fail=1 - p_fusion_success) -
+            p_ZZ_dist_func(1 - p_loss, i,     dist_err, p_fail=1 - p_fusion_success)
+            for i in range(m_max)])
+        if np.any(probs_ZZ_attempt_list):
+            all_ZZ_indices = np.random.choice(attempt_index, num_fusions, p=probs_ZZ_attempt_list / np.sum(probs_ZZ_attempt_list))
+        else:
+            # dist_err ≈ 0: outcome 1 has zero probability, ZZ indices unused
+            all_ZZ_indices = all_XXZZ_indices  # dummy
+
+        RUS_outcomes_array      = np.array(RUS_outcomes_XXZZ_indice, dtype=np.int64)
+        qbts_in_fusions_arr     = np.array(qbts_in_fusions, dtype=np.int64)
+        fusions_primal_isZZ_arr = np.array(fusions_primal_isZZ, dtype=np.int64)
+
+        fus_error_list = compute_fus_errors_jit(
+            num_fusions, m_max, qbts_in_fusions_arr,
+            RUS_outcomes_array, all_XXZZ_indices, all_ZZ_indices,
+            fusions_primal_isZZ_arr, qubit_errors, fus_error_list)
+
+        # Add ee-dist fusion errors on ZZ outcomes (only when r_ee > 0)
+        if p_fusion_error_ZZ > 0:
+            for log_fus_ix in range(num_fusions):
+                outcome = RUS_outcomes_XXZZ_indice[log_fus_ix]
+                if outcome in (1, 3):  # ZZ or XXZZ — has a ZZ measurement
+                    zz_side = 1 - fusions_primal_isZZ[log_fus_ix]
+                    fus_error_list[zz_side, log_fus_ix] ^= np.random.binomial(1, p_fusion_error_ZZ)
+
         primal_errors = fus_error_list[0][np.where(np.logical_not(primal_lost_fusions))[0]]
         dual_errors   = fus_error_list[1][np.where(np.logical_not(dual_lost_fusions))[0]]
         
@@ -1330,15 +1697,15 @@ def fusion_ErasureError( num_fusions, qbts_in_fusions, num_qubits_res_state, fus
                 fus_error_list[1-fusions_primal_isZZ[log_fus_ix]][log_fus_ix] = (((qubit_errors[logqbt1_ix][all_XXZZ_indices[log_fus_ix]-1] +
                                                                                     qubit_errors[logqbt2_ix][all_XXZZ_indices[log_fus_ix]-1]) % 2)[0] +
                                                                                     np.random.binomial(1,p_fusion_error_ZZ) ) % 2 
-            # (1) spin error: list of ZZ physical fusion errors, odd number of X that gives error to physical ZZ fusion, which leads to logical ZZ
-            # (2) dist error: sample fusion error on the only ZZ outcome. For RUS we always stop at getting one ZZ physical outcome
+            # spin error: list of ZZ physical fusion errors, odd number of X that gives error to physical ZZ fusion, which leads to logical ZZ
+            # dist error: sample fusion error on the only ZZ outcome. For RUS we always stop at getting one ZZ physical outcome
                 
             elif RUS_outcomes_XXZZ_indice[log_fus_ix] == 1: # if log fusion ends up with logical ZZ
                 fus_error_list[1-fusions_primal_isZZ[log_fus_ix]][log_fus_ix] = (((qubit_errors[logqbt1_ix][all_ZZ_indices[log_fus_ix]-1] +
                                                                                    qubit_errors[logqbt2_ix][all_ZZ_indices[log_fus_ix]-1]) % 2)[0] + 
                                                                                    np.random.binomial(1,p_fusion_error_ZZ) ) % 2
-            # (1) spin error: list of ZZ physical fusion errors, odd number of X that gives error to physical ZZ fusion, which leads to logical ZZ
-            # (2) dist error: sample fusion error on the only ZZ outcome. For RUS we always stop at getting one ZZ physical outcome
+            # spin error: list of ZZ physical fusion errors, odd number of X that gives error to physical ZZ fusion, which leads to logical ZZ
+            # dist error: sample fusion error on the only ZZ outcome. For RUS we always stop at getting one ZZ physical outcome
 
             elif RUS_outcomes_XXZZ_indice[log_fus_ix] == 0: # if log fusion ends up with logical XX only
             # consider spin error in logical XX
@@ -1363,10 +1730,12 @@ def fusion_ErasureError( num_fusions, qbts_in_fusions, num_qubits_res_state, fus
         
         RUS_outcomes_XXZZ_indice = list(np.random.choice(RUS_lost_outcomes_index, num_fusions, p=probs_RUS_lost_outcomes_list))
         lost_fusion_XXZZ = RUS_lost_outcomes_list[RUS_outcomes_XXZZ_indice]
-        primal_lost_fusions = [lost_fusion_XXZZ[i][j] for i,j in enumerate(fusions_primal_isZZ)] #
+        primal_lost_fusions = [lost_fusion_XXZZ[i][j] for i,j in enumerate(fusions_primal_isZZ)] 
         dual_lost_fusions = [lost_fusion_XXZZ[i][j] for i,j in enumerate(1-fusions_primal_isZZ)]
             
     return primal_errors, dual_errors, primal_lost_fusions, dual_lost_fusions
+
+#################### Main ####################
 
 if __name__ == '__main__':
     from timeit import default_timer
